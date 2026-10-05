@@ -1115,10 +1115,6 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             ("U", "stack"),
             ("p", "park"),
             ("l", "load"),
-            ("o", "ollama"),
-            ("m", "lms"),
-            ("x", "kill"),
-            ("R", "logo"),
             ("?", "help"),
             ("q", "quit"),
         ] {
