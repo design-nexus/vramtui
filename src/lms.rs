@@ -89,6 +89,30 @@ pub fn should_call_lms(
     }
 }
 
+/// True when the json pid is alive and the control port answers.
+/// That is the app, not the inference server on :1234.
+#[allow(dead_code)]
+pub fn is_ready(daemon: Option<&Daemon>) -> bool {
+    should_call_lms(daemon, pid_alive, port_open)
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerStatus {
+    pub running: bool,
+    pub port: u16,
+}
+
+pub fn parse_server_status(raw: &str) -> ServerStatus {
+    let text = raw.trim();
+    if let Ok(data) = serde_json::from_str::<Value>(text) {
+        return ServerStatus {
+            running: data.get("running").and_then(Value::as_bool).unwrap_or(false),
+            port: data.get("port").and_then(Value::as_u64).unwrap_or(0) as u16,
+        };
+    }
+    ServerStatus::default()
+}
+
 #[allow(dead_code)]
 pub fn query_loaded(
     daemon: Option<&Daemon>,
@@ -191,13 +215,25 @@ pub async fn run(bin: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
-pub async fn loaded(bin: &Path, json_path: &Path) -> Result<(Option<Daemon>, Vec<LoadedModel>), String> {
+pub async fn loaded(
+    bin: &Path,
+    json_path: &Path,
+) -> Result<(Option<Daemon>, bool, ServerStatus, Vec<LoadedModel>), String> {
     let daemon = read_daemon_file(json_path);
-    if !should_call_lms(daemon.as_ref(), pid_alive, port_open) {
-        return Ok((daemon, Vec::new()));
+    let app_up = should_call_lms(daemon.as_ref(), pid_alive, port_open);
+    if !app_up {
+        return Ok((daemon, false, ServerStatus::default(), Vec::new()));
     }
-    let raw = run(bin, &["ps", "--json"]).await?;
-    Ok((daemon, parse_ps(&raw)?))
+    let status = match run(bin, &["server", "status", "--json"]).await {
+        Ok(raw) => parse_server_status(&raw),
+        Err(err) if err.to_ascii_lowercase().contains("not running") => ServerStatus::default(),
+        Err(err) => return Err(err),
+    };
+    if !status.running {
+        return Ok((daemon, true, status, Vec::new()));
+    }
+    let models = parse_ps(&run(bin, &["ps", "--json"]).await?)?;
+    Ok((daemon, true, status, models))
 }
 
 pub async fn installed(bin: &Path, json_path: &Path) -> Result<Vec<Installed>, String> {
@@ -282,6 +318,23 @@ mod tests {
         .unwrap();
         assert!(result.is_empty());
         assert!(!called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn closed_port_is_not_ready() {
+        let daemon = parse_daemon(r#"{"host":"127.0.0.1","pid":370180,"port":41343}"#);
+        assert!(!should_call_lms(daemon.as_ref(), |_| true, |_, _| false));
+        assert!(!is_ready(None));
+    }
+
+    #[test]
+    fn server_status_json_can_be_down() {
+        let down = parse_server_status(r#"{"running":false,"port":1234}"#);
+        assert!(!down.running);
+        assert_eq!(down.port, 1234);
+        let up = parse_server_status(r#"{"running":true,"port":1234}"#);
+        assert!(up.running);
+        assert!(!parse_server_status("the server is not running").running);
     }
 
     #[test]

@@ -39,6 +39,9 @@ pub struct Snapshot {
     pub ollama_models: Vec<RunningModel>,
     pub ollama_error: Option<String>,
     pub lms_daemon: Option<Daemon>,
+    pub lms_app: bool,
+    pub lms_online: bool,
+    pub lms_server_port: u16,
     pub lms_models: Vec<LoadedModel>,
     pub lms_error: Option<String>,
 }
@@ -322,7 +325,7 @@ impl App {
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('j') | KeyCode::Down => self.move_sel(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_sel(-1),
-            KeyCode::Char('r') => self.status = "Refreshing…".into(),
+            KeyCode::Char('r') => self.refresh(),
             KeyCode::Char('R') => {
                 self.logo.replay();
                 self.status = "Replaying wordmark".into();
@@ -516,11 +519,7 @@ impl App {
         let stack = match self.selected_tenant().map(|t| t.stack) {
             Some(Stack::Ollama) => Stack::Ollama,
             Some(Stack::LmStudio) => Stack::LmStudio,
-            _ if self.snapshot.lms_daemon.as_ref().is_some()
-                && proc_alive(self.snapshot.lms_daemon.as_ref()) =>
-            {
-                Stack::LmStudio
-            }
+            _ if self.snapshot.lms_online => Stack::LmStudio,
             _ if self.snapshot.ollama_online => Stack::Ollama,
             _ => {
                 self.status = "No inference stack is online".into();
@@ -568,7 +567,7 @@ impl App {
     }
 
     fn toggle_lms(&mut self) {
-        if self.snapshot.lms_daemon.is_some() && proc_alive(self.snapshot.lms_daemon.as_ref()) {
+        if self.snapshot.lms_online {
             self.mode = Mode::Confirm(Confirm {
                 prompt: "Stop LM Studio server? y/n".into(),
                 action: ConfirmAction::StopLms,
@@ -685,10 +684,19 @@ impl App {
         });
         self.status = "Working…".into();
     }
-}
 
-fn proc_alive(daemon: Option<&Daemon>) -> bool {
-    daemon.map(|d| lms::pid_alive(d.pid)).unwrap_or(false)
+    fn refresh(&mut self) {
+        self.status = "Refreshing…".into();
+        let config = self.config.clone();
+        let json = self.json_path.clone();
+        let lms_path = self.lms_path.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            let snap = poll_once(&config, &json, &lms_path).await;
+            let _ = tx.send(Bus::Snapshot(snap));
+            let _ = tx.send(Bus::Status("Refreshed".into()));
+        });
+    }
 }
 
 fn filtered(ui: &LoadUi) -> Vec<LoadItem> {
@@ -938,12 +946,14 @@ pub async fn poll_once(config: &Config, json_path: &PathBuf, lms_path: &PathBuf)
         }
     };
     let lms = lms::loaded(lms_path, json_path).await;
-    let (lms_daemon, lms_models, lms_error) = match lms {
-        Ok((daemon, models)) => (daemon, models, None),
+    let (lms_daemon, lms_app, lms_online, lms_server_port, lms_models, lms_error) = match lms {
+        Ok((daemon, app_up, status, models)) => {
+            (daemon, app_up, status.running, status.port, models, None)
+        }
         Err(err) => {
             let daemon = lms::read_daemon_file(json_path);
             let err = if is_unreachable(&err) { None } else { Some(err) };
-            (daemon, Vec::new(), err)
+            (daemon, false, false, 0, Vec::new(), err)
         }
     };
     Snapshot {
@@ -954,6 +964,9 @@ pub async fn poll_once(config: &Config, json_path: &PathBuf, lms_path: &PathBuf)
         ollama_models,
         ollama_error,
         lms_daemon,
+        lms_app,
+        lms_online,
+        lms_server_port,
         lms_models,
         lms_error,
     }

@@ -15,6 +15,7 @@ This is not a chat UI and not a bar plugin.
 | `U` | Unload every model on that stack |
 | `p` | Park the other stack (unload its models) |
 | `l` | Load a model onto the focused stack |
+| `r` | Refresh occupancy now |
 | `o` | Start or stop Ollama |
 | `m` | Start or stop the LM Studio server |
 | `x` | Kill the selected orphan (confirm) |

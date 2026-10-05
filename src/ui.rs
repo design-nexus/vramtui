@@ -658,35 +658,52 @@ fn draw_stack_cards(frame: &mut Frame, area: Rect, app: &App) {
         .iter()
         .filter(|t| t.stack == Stack::LmStudio)
         .count();
-    let (lms_status, lms_style, lms_host, lms_port, lms_pid, lms_alive) =
-        match &app.snapshot.lms_daemon {
-            Some(d) if crate::lms::pid_alive(d.pid) => (
-                "online".into(),
-                Style::default().fg(theme.green),
-                d.host.clone(),
-                d.port.to_string(),
-                d.pid.to_string(),
-                true,
-            ),
-            Some(d) => (
-                "stale".into(),
-                Style::default().fg(theme.yellow),
-                d.host.clone(),
-                d.port.to_string(),
-                d.pid.to_string(),
-                false,
-            ),
-            None => (
-                "offline".into(),
-                Style::default().fg(theme.red),
-                "—".into(),
-                "—".into(),
-                "—".into(),
-                false,
-            ),
-        };
+    let (lms_host, lms_pid) = match &app.snapshot.lms_daemon {
+        Some(d) => (d.host.clone(), d.pid.to_string()),
+        None => ("—".into(), "—".into()),
+    };
+    let lms_port = if app.snapshot.lms_server_port > 0 {
+        app.snapshot.lms_server_port.to_string()
+    } else {
+        app.snapshot
+            .lms_daemon
+            .as_ref()
+            .map(|d| d.port.to_string())
+            .unwrap_or_else(|| "—".into())
+    };
+    let lms_alive = app.snapshot.lms_online;
     let mut lms_stats = vec![
-        ("Status", lms_status, lms_style),
+        (
+            "Status",
+            if lms_alive {
+                "online".into()
+            } else {
+                "offline".into()
+            },
+            Style::default().fg(if lms_alive { theme.green } else { theme.red }),
+        ),
+        (
+            "App",
+            if app.snapshot.lms_app {
+                "running".into()
+            } else {
+                "stopped".into()
+            },
+            Style::default().fg(if app.snapshot.lms_app {
+                theme.green
+            } else {
+                theme.muted
+            }),
+        ),
+        (
+            "Server",
+            if lms_alive {
+                "running".into()
+            } else {
+                "stopped".into()
+            },
+            Style::default().fg(if lms_alive { theme.green } else { theme.red }),
+        ),
         ("Models", lms_n.to_string(), Style::default().fg(theme.fg)),
         (
             "VRAM",
@@ -1115,6 +1132,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             ("U", "stack"),
             ("p", "park"),
             ("l", "load"),
+            ("r", "refresh"),
             ("?", "help"),
             ("q", "quit"),
         ] {
