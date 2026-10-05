@@ -1315,10 +1315,9 @@ fn draw_confirm(frame: &mut Frame, app: &App, confirm: &Confirm) {
 
 fn keycap(key: &str, _theme: &Theme) -> Span<'static> {
     Span::styled(
-        format!(" {key} "),
+        format!("({key})"),
         Style::default()
-            .bg(gradient_at(1.0))
-            .fg(Color::Rgb(0xf8, 0xf8, 0xf2))
+            .fg(gradient_at(1.0))
             .add_modifier(Modifier::BOLD),
     )
 }
